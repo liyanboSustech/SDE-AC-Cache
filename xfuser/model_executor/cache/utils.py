@@ -1,6 +1,7 @@
 """
 adapted from https://github.com/ali-vilab/TeaCache.git
 adapted from https://github.com/chengzeyi/ParaAttention.git
+adapted from 
 """
 import dataclasses
 from typing import Dict, Optional, List
@@ -31,6 +32,11 @@ class CacheContext(Module):
         # For FastCache
         self.register_buffer("prev_hidden_states", None, persistent=False)
         self.register_buffer("static_token_mask", None, persistent=False)
+        
+        # For Taylorseer
+    
+        
+        
         
     def get_coef(self, name: str) -> torch.Tensor:
         return getattr(self, f"{name}_coef")
@@ -505,3 +511,288 @@ class FastCachedTransformerBlocks(CachedTransformerBlocks):
             return float('inf')
             
         return (diff_norm / prev_norm).item()
+    
+class SDECachedTransformerBlocks(CachedTransformerBlocks):
+    def __init__(
+        self,
+        transformer_blocks: List[Module],
+        single_transformer_blocks: Optional[List[Module]] = None,
+        *,
+        transformer: Optional[Module] = None,
+        rel_l1_thresh: float = 0.6,
+        sde_epsilon: float = 0.02,
+        num_steps: int = 50,
+        beta_schedule_type: str = "linear",
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+        cosine_s: float = 0.008,  # 余弦调度的平滑因子
+        name: str = "sde_ac",
+        callbacks: Optional[List[CacheCallback]] = None,
+    ):
+        super().__init__(
+            transformer_blocks,
+            single_transformer_blocks=single_transformer_blocks,
+            transformer=transformer,
+            rel_l1_thresh=rel_l1_thresh,
+            num_steps=num_steps,
+            name=name,
+            callbacks=callbacks
+        )
+        self.sde_epsilon = torch.tensor(sde_epsilon).cuda()
+        self.register_buffer("current_timestep", torch.tensor(0).cuda())
+        self.register_buffer("beta_schedule", None)
+        self.register_buffer("cache_interval", torch.tensor(1).cuda())
+        
+        # 保存调度类型和参数
+        self.beta_schedule_type = beta_schedule_type
+        self.beta_start = beta_start
+        self.beta_end = beta_end
+        self.cosine_s = cosine_s
+        
+        # 初始化beta调度
+        if self.beta_schedule_type == "linear":
+            self.init_linear_beta_schedule(num_steps)
+        elif self.beta_schedule_type == "cosine":
+            self.init_cosine_beta_schedule(num_steps)
+        else:
+            raise ValueError(f"Unsupported beta schedule type: {beta_schedule_type}")
+        
+    def init_linear_beta_schedule(self, num_steps: int):
+        """Initialize a linear beta schedule for SDE"""
+        # 线性插值生成beta序列
+        betas = torch.linspace(self.beta_start, self.beta_end, num_steps)
+        self.init_sde_params(betas)
+    
+    def init_cosine_beta_schedule(self, num_steps: int):
+        """Initialize a cosine beta schedule for SDE"""
+        # 正确的余弦调度实现（基于Nichol等人的论文）
+        steps = torch.arange(num_steps + 1, dtype=torch.float32) / num_steps
+        alpha_cumprod = torch.cos((steps + self.cosine_s) / (1 + self.cosine_s) * math.pi / 2) ** 2
+        alpha_cumprod = alpha_cumprod / alpha_cumprod[0]  # 归一化，确保alpha_cumprod[0] = 1
+        
+        # 计算beta序列
+        betas = 1 - (alpha_cumprod[1:] / alpha_cumprod[:-1])
+        
+        # 数值稳定性处理
+        betas = torch.clamp(betas, max=0.999)  # 防止beta过大
+        betas = torch.where(betas < self.beta_start, self.beta_start, betas)  # 确保beta不小于最小值
+        
+        self.init_sde_params(betas)
+        
+    def init_sde_params(self, beta_schedule: torch.Tensor):
+        """Initialize SDE parameters from beta schedule"""
+        # 参数校验
+        assert beta_schedule.ndim == 1, f"Beta schedule must be 1D tensor, got {beta_schedule.ndim}D"
+        assert len(beta_schedule) == self.num_steps, f"Beta schedule length {len(beta_schedule)} != num_steps {self.num_steps}"
+        
+        self.beta_schedule = beta_schedule.cuda()
+        self.alpha_schedule = 1.0 - self.beta_schedule
+        self.alpha_cumprod = torch.cumprod(self.alpha_schedule, dim=0)
+        
+        # 计算辅助参数（用于缓存决策）
+        self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod)
+        self.sqrt_one_minus_alpha_cumprod = torch.sqrt(1 - self.alpha_cumprod)
+        
+    def get_beta_at_timestep(self, t: int) -> torch.Tensor:
+        """获取指定时间步的beta值"""
+        return self.beta_schedule[t]
+    
+    def get_alpha_cumprod_at_timestep(self, t: int) -> torch.Tensor:
+        """获取指定时间步的累积alpha值"""
+        return self.alpha_cumprod[t]
+    
+    def compute_lambda(self, t: int) -> torch.Tensor:
+        g_t = torch.sqrt(2 * self.beta_schedule[t])
+        alpha_t = self.alpha_schedule[t]
+        return g_t / torch.sqrt(alpha_t)
+
+    def compute_cache_interval(self, lambda_t: torch.Tensor) -> int:
+        if lambda_t < 1e-6:
+            return 1
+        delta_t = int(torch.clamp(1.0 / (lambda_t **2), min=1, max=self.num_steps//5))
+        return delta_t
+
+    def are_two_tensor_similar(self, t1: torch.Tensor, t2: torch.Tensor, threshold: float) -> torch.Tensor:
+        lambda_t = self.compute_lambda(self.current_timestep)
+        self.cache_interval = self.compute_cache_interval(lambda_t)
+        
+        if lambda_t <= self.sde_epsilon:
+            feature_similar = self.l1_distance(t1, t2) < threshold
+            return feature_similar & (self.cnt % self.cache_interval == 0)
+        else:
+            return torch.tensor(False, dtype=torch.bool).cuda()
+
+    def get_modulated_inputs(self, hidden_states, encoder_hidden_states, *args, **kwargs):
+        temb = kwargs.get("temb", None)
+        if temb is not None:
+            self.current_timestep = torch.argmin(torch.abs(temb - self.beta_schedule)).item()
+        
+        prev_modulated = self.cache_context.modulated_inputs
+        self.cache_context.modulated_inputs = hidden_states.detach().clone()
+        
+        return hidden_states, prev_modulated, hidden_states, encoder_hidden_states
+    
+class TaylorCachedTransformerBlocks(CachedTransformerBlocks):
+    def __init__(
+        self,
+        transformer_blocks: List[Module],
+        single_transformer_blocks: Optional[List[Module]] = None,
+        *,
+        transformer: Optional[Module] = None,
+        rel_l1_thresh: float = 0.6,      # 基础特征差异阈值
+        taylor_order: int = 2,           # Taylor展开阶数
+        num_steps: int = 50,             # 扩散总时间步
+        first_enhance: int = 5,          # 开始增强缓存的步数
+        name: str = "taylor",
+        callbacks: Optional[List[CacheCallback]] = None,
+    ):
+        super().__init__(
+            transformer_blocks,
+            single_transformer_blocks=single_transformer_blocks,
+            transformer=transformer,
+            rel_l1_thresh=rel_l1_thresh,
+            num_steps=num_steps,
+            name=name,
+            callbacks=callbacks
+        )
+        self.taylor_order = taylor_order
+        self.first_enhance = first_enhance
+        self.register_buffer("cache_interval", torch.tensor(1).cuda())
+        self.register_buffer("last_activated_step", torch.tensor(-1).cuda())
+        # 哪些参数需要register_buffer?
+        
+        # 初始化缓存结构
+        self.cache_context.taylor_cache = True
+        self.cache_context.max_order = taylor_order
+        self.cache_context.activated_steps = []
+
+    def init_taylor_params(self):
+        """初始化Taylor展开所需的参数"""
+        self.cache_context.activated_steps = []
+        self.cache_context.first_enhance = self.first_enhance
+
+    def update_taylor_derivatives(self, feature: torch.Tensor, stream: str, layer: int, module: str):
+        """更新特征的各阶导数"""
+        current = {
+            'step': self.cnt,
+            'stream': stream,
+            'layer': layer,
+            'module': module,
+            'activated_steps': self.cache_context.activated_steps,
+            'first_enhance': self.first_enhance
+        }
+        
+        # 初始化Taylor缓存
+        taylor_cache_init(self.cache_context, current)
+        
+        # 计算导数近似
+        derivative_approximation(self.cache_context, current, feature)
+        
+        # 更新激活步骤列表
+        if len(self.cache_context.activated_steps) > 0 and self.cache_context.activated_steps[-1] == self.cnt:
+            pass  # 已记录当前步骤
+        else:
+            self.cache_context.activated_steps.append(self.cnt)
+        
+        # 限制列表长度
+        if len(self.cache_context.activated_steps) > 10:
+            self.cache_context.activated_steps = self.cache_context.activated_steps[-10:]
+
+    def taylor_predict(self, stream: str, layer: int, module: str) -> torch.Tensor:
+        """使用Taylor展开预测特征"""
+        current = {
+            'step': self.cnt,
+            'stream': stream,
+            'layer': layer,
+            'module': module,
+            'activated_steps': self.cache_context.activated_steps,
+        }
+        
+        # 使用Taylor公式计算预测值
+        return taylor_formula(self.cache_context, current)
+
+    def are_two_tensor_similar(self, t1: torch.Tensor, t2: torch.Tensor, threshold: float) -> torch.Tensor:
+        """基于Taylor展开预测误差的缓存决策"""
+        # 检查是否有足够的历史步骤进行预测
+        if len(self.cache_context.activated_steps) < 2:
+            return torch.tensor(False, dtype=torch.bool).cuda()
+            
+        # 预测当前特征
+        predicted_feature = self.taylor_predict(
+            stream='single_stream' if self.single_stream_mode else 'double_stream',
+            layer=self.current_layer,
+            module=self.current_module
+        )
+        
+        if predicted_feature is None:
+            return torch.tensor(False, dtype=torch.bool).cuda()
+            
+        # 计算预测误差
+        pred_error = self.l1_distance(predicted_feature, t1)
+        
+        # 基于预测误差和特征差异的缓存决策
+        feature_similar = self.l1_distance(t1, t2) < threshold
+        return feature_similar & (pred_error < threshold) & (self.cnt % self.cache_interval == 0)
+
+    def get_modulated_inputs(self, hidden_states, encoder_hidden_states, *args, **kwargs):
+        """获取调制输入并更新Taylor展开参数"""
+        prev_modulated = self.cache_context.modulated_inputs
+        self.cache_context.modulated_inputs = hidden_states.detach().clone()
+        
+        # 更新Taylor导数
+        self.update_taylor_derivatives(
+            hidden_states,
+            stream='single_stream' if self.single_stream_mode else 'double_stream',
+            layer=0,  # 输入层
+            module='input'
+        )
+        
+        return hidden_states, prev_modulated, hidden_states, encoder_hidden_states
+
+    def process_blocks(self, start_idx: int, hidden: torch.Tensor, encoder: torch.Tensor, *args, **kwargs):
+        """重写处理逻辑：使用Taylor展开优化缓存特征的应用"""
+        if self.use_cache and len(self.cache_context.activated_steps) > 1:
+            stream_type = 'single_stream' if self.single_stream_mode else 'double_stream'
+            
+            # 使用Taylor展开预测特征
+            predicted_hidden = self.taylor_predict(
+                stream=stream_type,
+                layer=self.current_layer,
+                module='total'
+            )
+            
+            if predicted_hidden is not None:
+                # 应用预测的残差
+                hidden = predicted_hidden + self.cache_context.hidden_states_residual
+                if encoder is not None:
+                    encoder = encoder + self.cache_context.encoder_hidden_states_residual
+            else:
+                # 没有预测值时使用基础缓存
+                hidden = hidden + self.cache_context.hidden_states_residual
+                if encoder is not None:
+                    encoder = encoder + self.cache_context.encoder_hidden_states_residual
+        else:
+            # 正常处理所有块
+            hidden, encoder = super().process_blocks(start_idx, hidden, encoder, *args, **kwargs)
+            
+            # 更新当前处理的层和模块
+            self.current_layer = start_idx
+            
+            # 为处理后的特征更新Taylor导数
+            self.update_taylor_derivatives(
+                hidden,
+                stream='single_stream' if self.single_stream_mode else 'double_stream',
+                layer=start_idx,
+                module='total'
+            )
+            
+        return hidden, encoder
+
+    def forward(self, hidden_states, encoder_hidden_states, *args, **kwargs):
+        """重写forward：初始化Taylor参数"""
+        # 初始化Taylor参数（首次调用时）
+        if not hasattr(self.cache_context, 'taylor_cache') or not self.cache_context.taylor_cache:
+            self.init_taylor_params()
+        
+        # 调用父类forward逻辑
+        return super().forward(hidden_states, encoder_hidden_states, *args, **kwargs)

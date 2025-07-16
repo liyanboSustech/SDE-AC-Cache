@@ -17,6 +17,9 @@ def create_cached_transformer_blocks(use_cache, transformer, rel_l1_thresh, retu
         "Fb": utils.FBCachedTransformerBlocks,
         "Tea": utils.TeaCachedTransformerBlocks,
         "Fast": utils.FastCachedTransformerBlocks,
+        "SDE-AC": utils.SDECachedTransformerBlocks,
+        "Taylorseer": utils.TaylorCachedTransformerBlocks,
+        "Toca": utils.TocaCachedTransformerBlocks,
     }.get(use_cache)
 
     if not cached_transformer_class:
