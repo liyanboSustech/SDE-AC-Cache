@@ -486,6 +486,9 @@ class FastCachedTransformerBlocks(CachedTransformerBlocks):
             
             # 完整执行transformer处理
             current_hidden, current_encoder = block(current_hidden, current_encoder, *args, **kwargs)
+            # 这里决定返回顺序的原因是？
+            # 如果需要返回hidden states在前，则交换顺序
+            # 为什么
             current_hidden, current_encoder = (current_hidden, current_encoder) if self.return_hidden_states_first else (current_encoder, current_hidden)
         
         # 处理single_transformer_blocks如果存在
@@ -521,6 +524,7 @@ class SDECachedTransformerBlocks(CachedTransformerBlocks):
         transformer: Optional[Module] = None,
         rel_l1_thresh: float = 0.6,
         sde_epsilon: float = 0.02,
+        # default_interval: int = 5,
         num_steps: int = 50,
         beta_schedule_type: str = "linear",
         beta_start: float = 0.0001,
@@ -538,8 +542,8 @@ class SDECachedTransformerBlocks(CachedTransformerBlocks):
             name=name,
             callbacks=callbacks
         )
+        # self.default_interval = default_interval
         self.sde_epsilon = torch.tensor(sde_epsilon).cuda()
-        self.register_buffer("current_timestep", torch.tensor(0).cuda())
         self.register_buffer("beta_schedule", None)
         self.register_buffer("cache_interval", torch.tensor(1).cuda())
         
@@ -555,6 +559,7 @@ class SDECachedTransformerBlocks(CachedTransformerBlocks):
         elif self.beta_schedule_type == "cosine":
             self.init_cosine_beta_schedule(num_steps)
         else:
+            # try to customize beta schedule if not supported
             raise ValueError(f"Unsupported beta schedule type: {beta_schedule_type}")
         
     def init_linear_beta_schedule(self, num_steps: int):
@@ -592,28 +597,46 @@ class SDECachedTransformerBlocks(CachedTransformerBlocks):
         # 计算辅助参数（用于缓存决策）
         self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod)
         self.sqrt_one_minus_alpha_cumprod = torch.sqrt(1 - self.alpha_cumprod)
-        
-    def get_beta_at_timestep(self, t: int) -> torch.Tensor:
+    
+    # def get_adaptive_threshold(self, variance_score, timestep=None):
+    #     """Calculate adaptive threshold based on variance and current timestep"""
+    #     if timestep is None:
+    #         timestep = self.cnt
+    
+    def get_beta_at_timestep(self, timestep: int) -> torch.Tensor:
         """获取指定时间步的beta值"""
-        return self.beta_schedule[t]
+        if timestep < 0 or timestep >= self.num_steps:
+            raise ValueError(f"Timestep {timestep} out of bounds [0, {self.num_steps - 1}]")
+        if timestep is None:
+            timestep = self.cnt
+        return self.beta_schedule[timestep]
     
-    def get_alpha_cumprod_at_timestep(self, t: int) -> torch.Tensor:
+    def get_alpha_cumprod_at_timestep(self, timestep: int) -> torch.Tensor:
         """获取指定时间步的累积alpha值"""
-        return self.alpha_cumprod[t]
+        if timestep < 0 or timestep >= self.num_steps:
+            raise ValueError(f"Timestep {timestep} out of bounds [0, {self.num_steps - 1}]")
+        if timestep is None:
+            timestep = self.cnt
+        return self.alpha_cumprod[timestep]
     
-    def compute_lambda(self, t: int) -> torch.Tensor:
-        g_t = torch.sqrt(2 * self.beta_schedule[t])
-        alpha_t = self.alpha_schedule[t]
+    def compute_lambda(self, timestep: int) -> torch.Tensor:
+        g_t = torch.sqrt(2 * self.beta_schedule[timestep])
+        alpha_t = self.alpha_schedule[timestep]
         return g_t / torch.sqrt(alpha_t)
 
     def compute_cache_interval(self, lambda_t: torch.Tensor) -> int:
+        # 计算缓存间隔
+        # 后续可能需要做修改
         if lambda_t < 1e-6:
             return 1
         delta_t = int(torch.clamp(1.0 / (lambda_t **2), min=1, max=self.num_steps//5))
         return delta_t
 
     def are_two_tensor_similar(self, t1: torch.Tensor, t2: torch.Tensor, threshold: float) -> torch.Tensor:
-        lambda_t = self.compute_lambda(self.current_timestep)
+        if t1 is None or t2 is None:
+            return torch.tensor(False, dtype=torch.bool).cuda()
+            
+        lambda_t = self.compute_lambda(self.cnt)
         self.cache_interval = self.compute_cache_interval(lambda_t)
         
         if lambda_t <= self.sde_epsilon:
@@ -621,16 +644,6 @@ class SDECachedTransformerBlocks(CachedTransformerBlocks):
             return feature_similar & (self.cnt % self.cache_interval == 0)
         else:
             return torch.tensor(False, dtype=torch.bool).cuda()
-
-    def get_modulated_inputs(self, hidden_states, encoder_hidden_states, *args, **kwargs):
-        temb = kwargs.get("temb", None)
-        if temb is not None:
-            self.current_timestep = torch.argmin(torch.abs(temb - self.beta_schedule)).item()
-        
-        prev_modulated = self.cache_context.modulated_inputs
-        self.cache_context.modulated_inputs = hidden_states.detach().clone()
-        
-        return hidden_states, prev_modulated, hidden_states, encoder_hidden_states
     
 class TaylorCachedTransformerBlocks(CachedTransformerBlocks):
     def __init__(
