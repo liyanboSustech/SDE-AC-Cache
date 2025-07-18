@@ -87,6 +87,8 @@ class xFuserPipelineWrapperRegister:
             
         try:
             # 导入基础wrapper类
+            # TODO: 引入其他方案的pipeline wrapper类
+            
             from .fastcache_pipeline import xFuserFastCachePipelineWrapper
             cls.register(DiffusionPipeline, xFuserFastCachePipelineWrapper)
             

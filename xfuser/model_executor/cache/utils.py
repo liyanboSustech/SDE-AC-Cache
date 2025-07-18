@@ -14,7 +14,7 @@ import torch
 from torch.nn import Module
 from abc import ABC, abstractmethod
 import math
-from taylorseer_utils import derivative_approximation, taylor_formula, taylor_cache_init
+from taylorseer.taylorseer_utils import derivative_approximation, taylor_formula, taylor_cache_init
 
 # --------- CacheContext --------- #
 class CacheContext(Module):
@@ -40,6 +40,7 @@ class CacheContext(Module):
         self.first_enhance = 0 # 第一次增强缓存的步数
         self.cache = [] # 存储各阶导数的缓存
         
+        # For Toca
         
         
     def get_coef(self, name: str) -> torch.Tensor:
@@ -774,7 +775,8 @@ class TaylorCachedTransformerBlocks(CachedTransformerBlocks):
             'layer': layer,
             'module': module,
             'activated_steps': self.cache_context.activated_steps,
-            'first_enhance': self.first_enhance
+            'first_enhance': self.first_enhance,
+            'max_order': self.taylor_order,
         }
 
         # 初始化泰勒缓存（确保层级结构存在）
@@ -812,6 +814,8 @@ class TaylorCachedTransformerBlocks(CachedTransformerBlocks):
             'layer': layer,
             'module': module,
             'activated_steps': self.cache_context.activated_steps,
+            'first_enhance': self.first_enhance,
+            'max_order': self.taylor_order,
         }
 
         # 检查缓存中是否存在当前流/层/模块的导数数据
@@ -915,3 +919,5 @@ class TaylorCachedTransformerBlocks(CachedTransformerBlocks):
         if not hasattr(self.cache_context, 'taylor_cache') or not self.cache_context.taylor_cache:
             self.init_taylor_params()
         return super().forward(hidden_states, encoder_hidden_states, *args, **kwargs)
+    
+class TocaCachedTransformerBlocks(CachedTransformerBlocks):

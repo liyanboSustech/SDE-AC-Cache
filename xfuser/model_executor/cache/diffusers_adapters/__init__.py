@@ -26,6 +26,9 @@ def apply_cache_on_transformer(transformer, *args, **kwargs):
             adapter_name = "pixart"
         elif "Flux" in adapter_name:
             adapter_name = "flux"
+        #TODO
+        # elif "stable_diffusion" in adapter_name:
+        #     adapter_name = "stable_diffusion"
         else:
             logger.error(f"Unknown transformer class: {transformer.__class__.__name__}")
             return transformer
