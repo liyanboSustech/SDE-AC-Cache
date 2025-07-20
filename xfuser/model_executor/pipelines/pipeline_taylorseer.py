@@ -75,8 +75,11 @@ class xFuserTaylorseerPipelineWrapper:
 
                 # apply wrapper
                 self.pipeline.transformer = xFuserFluxTransformer2DWrapper(original_transformer)
-
-        self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
+        # 如何把input_config中的max_order和fisrt_enhance传递给taylorseer_xfuser_flux_forward
+        # 这里引入max_order和fisrt_enhance需要加__class__吗？
+        self.pipeline.transformer.max_order = self.input_config.max_order
+        self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+        # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
         self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
 
         for double_transformer_block in self.pipeline.transformer.transformer_blocks:
@@ -86,7 +89,7 @@ class xFuserTaylorseerPipelineWrapper:
             single_transformer_block.__class__.forward = taylorseer_flux_single_block_forward
 
         self.taylorseer_enabled = True
-        logger.info("Taylorseer enabled successfully")
+        logger.info("Taylorseer enabled in FLUX successfully")
 
     def __call__(self, *args, **kwargs):
         """Call the wrapped pipeline with Taylorseer acceleration"""

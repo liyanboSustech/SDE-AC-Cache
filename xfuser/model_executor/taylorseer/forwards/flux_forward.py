@@ -26,11 +26,11 @@ from xfuser.core.distributed.parallel_state import (
     is_pipeline_last_stage,
 )
 
-from taylorseer.cache_functions import cache_init, cal_type
+from cache_functions import cache_init, cal_type
 
 logger = logging.get_logger(__name__)
 
-def taylorseer_xfuser_flux_forward(
+def taylorseer_flux_forward(
     self: FluxTransformer2DModel,
     hidden_states: torch.Tensor,
     encoder_hidden_states: torch.Tensor = None,
@@ -74,11 +74,9 @@ def taylorseer_xfuser_flux_forward(
         joint_attention_kwargs = {}
     if joint_attention_kwargs.get("cache_dic", None) is None:
         joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init(self)
-    # 这里如何将joint_attention_kwargs['max_order']和joint_attention_kwargs['first_enchance']传递给cal_type
-    joint_attention_kwargs['current']['max_order'] = self.input_config.max_order
-    joint_attention_kwargs['current']['first_enchance'] = self.input_config.fisrt_enhance
+
     cal_type(joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'])
-    print(f"max_order: {joint_attention_kwargs['current']['max_order']}, first_enchance: {joint_attention_kwargs['current']['first_enchance']}")
+
     if joint_attention_kwargs is not None:
         joint_attention_kwargs = joint_attention_kwargs.copy()
         lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -89,29 +87,25 @@ def taylorseer_xfuser_flux_forward(
         # weight the lora layers by setting `lora_scale` for each PEFT layer
         scale_lora_layers(self, lora_scale)
     else:
-        if (
-            joint_attention_kwargs is not None
-            and joint_attention_kwargs.get("scale", None) is not None
-        ):
+        if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
             logger.warning(
                 "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
             )
 
-    if is_pipeline_first_stage():
-        hidden_states = self.x_embedder(hidden_states)
+    hidden_states = self.x_embedder(hidden_states)
 
     timestep = timestep.to(hidden_states.dtype) * 1000
     if guidance is not None:
         guidance = guidance.to(hidden_states.dtype) * 1000
     else:
         guidance = None
+
     temb = (
         self.time_text_embed(timestep, pooled_projections)
         if guidance is None
         else self.time_text_embed(timestep, guidance, pooled_projections)
     )
-    if is_pipeline_first_stage():
-        encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+    encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
     if txt_ids.ndim == 3:
         logger.warning(
@@ -140,7 +134,7 @@ def taylorseer_xfuser_flux_forward(
 
         joint_attention_kwargs['current']['layer'] = index_block
 
-        if self.training and self.gradient_checkpointing:
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
 
             def create_custom_forward(module, return_dict=None):
                 def custom_forward(*inputs):
@@ -148,21 +142,17 @@ def taylorseer_xfuser_flux_forward(
                         return module(*inputs, return_dict=return_dict)
                     else:
                         return module(*inputs)
-
+                    
                 return custom_forward
             
-            ckpt_kwargs: Dict[str, Any] = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
-            encoder_hidden_states, hidden_states = (
-                torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb,
-                    image_rotary_emb,
-                    **ckpt_kwargs,
-                )
+            ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                create_custom_forward(block),
+                hidden_states,
+                encoder_hidden_states,
+                temb,
+                image_rotary_emb,
+                **ckpt_kwargs,
             )
 
         else:
@@ -175,12 +165,16 @@ def taylorseer_xfuser_flux_forward(
             )
             
         # controlnet residual
-        # if controlnet_block_samples is not None:
-        #     interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
-        #     interval_control = int(np.ceil(interval_control))
-        #     hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
-
-    # if self.stage_info.after_flags["transformer_blocks"]:
+        if controlnet_block_samples is not None:
+            interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
+            interval_control = int(np.ceil(interval_control))
+            # For Xlabs ControlNet.
+            if controlnet_blocks_repeat:
+                hidden_states = (
+                    hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
+                )
+            else:
+                hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
     hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
     
     joint_attention_kwargs['current']['stream'] = 'single_stream'
@@ -189,7 +183,7 @@ def taylorseer_xfuser_flux_forward(
 
         joint_attention_kwargs['current']['layer'] = index_block
 
-        if self.training and self.gradient_checkpointing:
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
 
             def create_custom_forward(module, return_dict=None):
                 def custom_forward(*inputs):
@@ -197,12 +191,9 @@ def taylorseer_xfuser_flux_forward(
                         return module(*inputs, return_dict=return_dict)
                     else:
                         return module(*inputs)
-
+                    
                 return custom_forward
-
-            ckpt_kwargs: Dict[str, Any] = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
             hidden_states = torch.utils.checkpoint.checkpoint(
                 create_custom_forward(block),
                 hidden_states,
@@ -220,27 +211,23 @@ def taylorseer_xfuser_flux_forward(
             )
 
         # controlnet residual
-        # if controlnet_single_block_samples is not None:
-        #     interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
-        #     interval_control = int(np.ceil(interval_control))
-        #     hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
-        #         hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-        #         + controlnet_single_block_samples[index_block // interval_control]
-        #     )
+        if controlnet_single_block_samples is not None:
+            interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
+            interval_control = int(np.ceil(interval_control))
+            hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
+                hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                + controlnet_single_block_samples[index_block // interval_control]
+            )
 
-    encoder_hidden_states = hidden_states[:, : encoder_hidden_states.shape[1], ...]
     hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
 
-    if self.stage_info.after_flags["single_transformer_blocks"]:
-        hidden_states = self.norm_out(hidden_states, temb)
-        output = self.proj_out(hidden_states), None
-    else:
-        output = hidden_states, encoder_hidden_states
+    hidden_states = self.norm_out(hidden_states, temb)
+    output = self.proj_out(hidden_states)
 
     if USE_PEFT_BACKEND:
         # remove `lora_scale` from each PEFT layer
         unscale_lora_layers(self, lora_scale)
-
+    
     joint_attention_kwargs['current']['step'] += 1
 
     if not return_dict:

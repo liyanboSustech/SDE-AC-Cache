@@ -26,7 +26,7 @@ from xfuser.core.distributed.parallel_state import (
     is_pipeline_last_stage,
 )
 
-from taylorseer.cache_functions import cache_init, cal_type
+from cache_functions import cache_init, cal_type
 
 logger = logging.get_logger(__name__)
 
@@ -74,11 +74,9 @@ def taylorseer_xfuser_flux_forward(
         joint_attention_kwargs = {}
     if joint_attention_kwargs.get("cache_dic", None) is None:
         joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init(self)
-    # 这里如何将joint_attention_kwargs['max_order']和joint_attention_kwargs['first_enchance']传递给cal_type
-    joint_attention_kwargs['current']['max_order'] = self.input_config.max_order
-    joint_attention_kwargs['current']['first_enchance'] = self.input_config.fisrt_enhance
+
     cal_type(joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'])
-    print(f"max_order: {joint_attention_kwargs['current']['max_order']}, first_enchance: {joint_attention_kwargs['current']['first_enchance']}")
+
     if joint_attention_kwargs is not None:
         joint_attention_kwargs = joint_attention_kwargs.copy()
         lora_scale = joint_attention_kwargs.pop("scale", 1.0)
