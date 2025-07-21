@@ -91,7 +91,8 @@ class xFuserPipelineWrapperRegister:
             
             from .fastcache_pipeline import xFuserFastCachePipelineWrapper
             cls.register(DiffusionPipeline, xFuserFastCachePipelineWrapper)
-            
+            from .pipeline_taylorseer  import xFuserTaylorseerPipelineWrapper
+            cls.register(DiffusionPipeline, xFuserTaylorseerPipelineWrapper)
             # 仅在需要时导入所有diffusers模型类
             try:
                 from diffusers import (

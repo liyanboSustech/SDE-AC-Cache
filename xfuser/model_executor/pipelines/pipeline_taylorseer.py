@@ -76,17 +76,14 @@ class xFuserTaylorseerPipelineWrapper:
             from xfuser.model_executor.models.transformers.transformer_sd3 import xFuserSD3Transformer2DWrapper
             self.pipeline.transformer = xFuserSD3Transformer2DWrapper(self.pipeline.transformer)
             self.pipeline.transformer.max_order = self.input_config.max_order
-            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            self.pipeline.transformer.fisrt_enchance = self.input_config.first_enhance
             # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
-            self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
-
-            for double_transformer_block in self.pipeline.transformer.transformer_blocks:
-                double_transformer_block.__class__.forward = taylorseer_flux_double_block_forward
-
-            for single_transformer_block in self.pipeline.transformer.single_transformer_blocks:
-                single_transformer_block.__class__.forward = taylorseer_flux_single_block_forward
-
-            self.taylorseer_enabled = True
+            
+            
+            
+            
+            
+            
             logger.info("Taylorseer enabled in Stable Diffusion3 successfully")
             
             
@@ -94,7 +91,7 @@ class xFuserTaylorseerPipelineWrapper:
             from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxTransformer2DWrapper
             self.pipeline.transformer = xFuserFluxTransformer2DWrapper(self.pipeline.transformer)
             self.pipeline.transformer.max_order = self.input_config.max_order
-            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            self.pipeline.transformer.fisrt_enchance = self.input_config.first_enhance
             # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
             self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
 
@@ -111,7 +108,7 @@ class xFuserTaylorseerPipelineWrapper:
             from xfuser.model_executor.models.transformers.pixart_transformer_2d import xFuserPixArtTransformer2DWrapper
             self.pipeline.transformer = xFuserPixArtTransformer2DWrapper(self.pipeline.transformer)
             self.pipeline.transformer.max_order = self.input_config.max_order
-            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            self.pipeline.transformer.fisrt_enchance = self.input_config.first_enhance
             self.pipeline.transformer.__class__.forward = taylorseer_xfuser_pixart_forward
             # pixart有double_transformer_blocks和single_transformer_blocks吗？
             self.taylorseer_enabled = True
