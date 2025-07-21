@@ -22,7 +22,7 @@ from xfuser.core.distributed.parallel_state import (
     is_pipeline_first_stage,
     is_pipeline_last_stage,
 )
-from taylorseer_forwards import taylorseer_flux_single_block_forward, taylorseer_flux_double_block_forward, taylorseer_flux_forward, taylorseer_xfuser_flux_forward
+from taylorseer_flux_forwards import taylorseer_flux_single_block_forward, taylorseer_flux_double_block_forward, taylorseer_flux_forward, taylorseer_xfuser_flux_forward
 from xfuser.logger import init_logger
 
 logger = init_logger(__name__)
@@ -63,33 +63,66 @@ class xFuserTaylorseerPipelineWrapper:
             logging.info(f"rank {local_rank} sequential CPU offload enabled")
         else:
             self.pipeline = self.pipeline.to(f"cuda:{local_rank}")
+        # # if is not distributed environment or tensor_parallel_degree is 1, ensure to use wrapper
+        # if not dist.is_initialized() or get_tensor_model_parallel_world_size() == 1:
+        #     # check if transformer is already wrapped
+        #     if not isinstance(self.pipeline.transformer, xFuserFluxTransformer2DWrapper):
+        #         # save original transformer
+        #         original_transformer = self.pipeline.transformer
+        #         # apply wrapper
+        #         self.pipeline.transformer = xFuserFluxTransformer2DWrapper(original_transformer)    
+        #通过input_config中的model_type来判断是sd3还是flux还是pixart，并import对应的xFuserTransformerWrapper
+        if self.input_config.model_type == "sd3":
+            from xfuser.model_executor.models.transformers.transformer_sd3 import xFuserSD3Transformer2DWrapper
+            self.pipeline.transformer = xFuserSD3Transformer2DWrapper(self.pipeline.transformer)
+            self.pipeline.transformer.max_order = self.input_config.max_order
+            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
+            self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
 
-        from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxTransformer2DWrapper
+            for double_transformer_block in self.pipeline.transformer.transformer_blocks:
+                double_transformer_block.__class__.forward = taylorseer_flux_double_block_forward
 
-        # if is not distributed environment or tensor_parallel_degree is 1, ensure to use wrapper
-        if not dist.is_initialized() or get_tensor_model_parallel_world_size() == 1:
-            # check if transformer is already wrapped
-            if not isinstance(self.pipeline.transformer, xFuserFluxTransformer2DWrapper):
-                # save original transformer
-                original_transformer = self.pipeline.transformer
+            for single_transformer_block in self.pipeline.transformer.single_transformer_blocks:
+                single_transformer_block.__class__.forward = taylorseer_flux_single_block_forward
 
-                # apply wrapper
-                self.pipeline.transformer = xFuserFluxTransformer2DWrapper(original_transformer)
-        # 如何把input_config中的max_order和fisrt_enhance传递给taylorseer_xfuser_flux_forward
-        # 这里引入max_order和fisrt_enhance需要加__class__吗？
-        self.pipeline.transformer.max_order = self.input_config.max_order
-        self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
-        # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
-        self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
+            self.taylorseer_enabled = True
+            logger.info("Taylorseer enabled in Stable Diffusion3 successfully")
+            
+            
+        elif self.input_config.model_type == "flux":
+            from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxTransformer2DWrapper
+            self.pipeline.transformer = xFuserFluxTransformer2DWrapper(self.pipeline.transformer)
+            self.pipeline.transformer.max_order = self.input_config.max_order
+            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            # self.pipeline.transformer.__class__.num_steps = self.input_config.num_inference_steps
+            self.pipeline.transformer.__class__.forward = taylorseer_xfuser_flux_forward
 
-        for double_transformer_block in self.pipeline.transformer.transformer_blocks:
-            double_transformer_block.__class__.forward = taylorseer_flux_double_block_forward
+            for double_transformer_block in self.pipeline.transformer.transformer_blocks:
+                double_transformer_block.__class__.forward = taylorseer_flux_double_block_forward
 
-        for single_transformer_block in self.pipeline.transformer.single_transformer_blocks:
-            single_transformer_block.__class__.forward = taylorseer_flux_single_block_forward
+            for single_transformer_block in self.pipeline.transformer.single_transformer_blocks:
+                single_transformer_block.__class__.forward = taylorseer_flux_single_block_forward
 
-        self.taylorseer_enabled = True
-        logger.info("Taylorseer enabled in FLUX successfully")
+            self.taylorseer_enabled = True
+            logger.info("Taylorseer enabled in FLUX successfully")
+            
+        elif self.input_config.model_type == "pixart":
+            from xfuser.model_executor.models.transformers.pixart_transformer_2d import xFuserPixArtTransformer2DWrapper
+            self.pipeline.transformer = xFuserPixArtTransformer2DWrapper(self.pipeline.transformer)
+            self.pipeline.transformer.max_order = self.input_config.max_order
+            self.pipeline.transformer.fisrt_enchance = self.input_config.fisrt_enhance
+            self.pipeline.transformer.__class__.forward = taylorseer_xfuser_pixart_forward
+            # pixart有double_transformer_blocks和single_transformer_blocks吗？
+            self.taylorseer_enabled = True
+            logger.info("Taylorseer enabled in PixArt-alpha successfully")
+            
+            
+        else:
+            raise ValueError(f"Unsupported model type: {self.input_config.model_type}")
+        
+        
+        
 
     def __call__(self, *args, **kwargs):
         """Call the wrapped pipeline with Taylorseer acceleration"""

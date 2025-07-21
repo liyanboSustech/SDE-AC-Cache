@@ -2,7 +2,7 @@ import argparse
 import os
 import time
 import torch
-from diffusers import StableDiffusion3Pipeline, FluxPipeline
+from diffusers import StableDiffusion3Pipeline, FluxPipeline, PixArtSigmaPipeline
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -12,7 +12,6 @@ from xfuser import xFuserFluxPipeline, xFuserArgs
 from xfuser.config import FlexibleArgumentParser
 from xfuser.core.distributed import get_world_group
 from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxTransformer2DWrapper
-from xfuser.model_executor.taylorseer_forwards import taylorseer_flux_single_block_forward, taylorseer_flux_double_block_forward, taylorseer_xfuser_flux_forward
 from transformers import T5EncoderModel
 
 from xfuser.parallel import xDiTParallel
@@ -31,9 +30,9 @@ def parse_args():
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["sd3", "flux"],
+        choices=["sd3", "flux", "pixart"],
         default="sd3",
-        help="Model type (sd3 or flux)",
+        help="Model type (sd3 or flux or pixart)",
     )
     parser.add_argument(
         "--prompt",
