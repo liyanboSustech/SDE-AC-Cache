@@ -14,7 +14,7 @@ from diffusers.models import (
 logger = init_logger(__name__)
 
 
-class xFuserMultiModelSDEWrapper:
+class xFuserSDEPipelineWrapper:
     """
     适配FLUX、PixArt-Alpha、SD3的通用SDE缓存包装器
     核心：根据模型类型自动适配Transformer块位置和SDE参数
@@ -23,96 +23,56 @@ class xFuserMultiModelSDEWrapper:
         self.pipeline = pipeline
         self.sde_enabled = False
         self.sde_cached_blocks = {}  
+        self.input_config = input_config
 
     def enable_sde_cache(
         self,
-        rel_l1_thresh: Optional[float] = None,
-        sde_epsilon: Optional[float] = None,
-        num_steps: int = 50,
-        beta_schedule_type: Optional[str] = None,
-        beta_start: Optional[float] = None,
-        beta_end: Optional[float] = None,
-        cosine_s: float = 0.008,
     ):
-        """
-        启用SDE缓存，根据模型类型自动适配参数
-        
-        Args:
-            rel_l1_thresh: 相对L1阈值（默认值随模型类型变化）
-            sde_epsilon: SDE噪声阈值（控制缓存灵敏度）
-            num_steps: 扩散步数
-            beta_schedule_type: beta调度类型（默认随模型类型变化）
-            beta_start/beta_end: beta范围（默认随模型类型变化）
-            cosine_s: 余弦调度参数
-        """
-        # 1. 根据模型类型设置默认参数（匹配原生扩散过程）
-        model_params = self._get_default_model_params()
-        rel_l1_thresh = rel_l1_thresh or model_params["rel_l1_thresh"]
-        sde_epsilon = sde_epsilon or model_params["sde_epsilon"]
-        beta_schedule_type = beta_schedule_type or model_params["beta_schedule_type"]
-        beta_start = beta_start or model_params["beta_start"]
-        beta_end = beta_end or model_params["beta_end"]
-
-        logger.info(f"Enabling SDE Cache for  with params: "
-                   f"rel_l1={rel_l1_thresh}, epsilon={sde_epsilon}, "
-                   f"beta_schedule={beta_schedule_type}, steps={num_steps}")
+        logger.info(f"Enabling SDE Cache for {self.pipeline.__class__.__name__}")
+        self.model_type = self.input_config.get("model_type", "").lower()
 
         # 2. 根据模型类型定位并替换Transformer块
         if self.model_type in ["flux", "pixart"]:
             self._wrap_standalone_transformer(
                 transformer=self.pipeline.transformer,
-                rel_l1_thresh=rel_l1_thresh,
-                sde_epsilon=sde_epsilon,
-                num_steps=num_steps,
-                beta_schedule_type=beta_schedule_type,
-                beta_start=beta_start,
-                beta_end=beta_end,
-                cosine_s=cosine_s
             )
         elif self.model_type == "sd3":
             self._wrap_sd3_unet(
                 unet=self.pipeline.unet,
-                rel_l1_thresh=rel_l1_thresh,
-                sde_epsilon=sde_epsilon,
-                num_steps=num_steps,
-                beta_schedule_type=beta_schedule_type,
-                beta_start=beta_start,
-                beta_end=beta_end,
-                cosine_s=cosine_s
             )
 
         self.sde_enabled = True
         logger.info(f"SDE Cache enabled for {self.model_type}")
 
-    def _get_default_model_params(self) -> dict:
-        """根据模型类型返回默认SDE参数（匹配原生扩散特性）"""
-        if self.model_type == "flux":
-            # FLUX原生用余弦调度，噪声更平缓
-            return {
-                "rel_l1_thresh": 0.5,
-                "sde_epsilon": 0.01,
-                "beta_schedule_type": "cosine",
-                "beta_start": 0.0001,
-                "beta_end": 0.02
-            }
-        elif self.model_type == "pixart":
-            # PixArt-Alpha偏向线性调度
-            return {
-                "rel_l1_thresh": 0.6,
-                "sde_epsilon": 0.02,
-                "beta_schedule_type": "linear",
-                "beta_start": 0.00085,
-                "beta_end": 0.012
-            }
-        elif self.model_type == "sd3":
-            # SD3兼容线性调度，噪声范围更广
-            return {
-                "rel_l1_thresh": 0.55,
-                "sde_epsilon": 0.015,
-                "beta_schedule_type": "linear",
-                "beta_start": 0.0001,
-                "beta_end": 0.02
-            }
+    # def _get_default_model_params(self) -> dict:
+    #     """根据模型类型返回默认SDE参数（匹配原生扩散特性）"""
+    #     if self.model_type == "flux":
+    #         # FLUX原生用余弦调度，噪声更平缓
+    #         return {
+    #             "rel_l1_thresh": 0.5,
+    #             "sde_epsilon": 0.01,
+    #             "beta_schedule_type": "cosine",
+    #             "beta_start": 0.0001,
+    #             "beta_end": 0.02
+    #         }
+    #     elif self.model_type == "pixart":
+    #         # PixArt-Alpha偏向线性调度
+    #         return {
+    #             "rel_l1_thresh": 0.6,
+    #             "sde_epsilon": 0.02,
+    #             "beta_schedule_type": "linear",
+    #             "beta_start": 0.00085,
+    #             "beta_end": 0.012
+    #         }
+    #     elif self.model_type == "sd3":
+    #         # SD3兼容线性调度，噪声范围更广
+    #         return {
+    #             "rel_l1_thresh": 0.55,
+    #             "sde_epsilon": 0.015,
+    #             "beta_schedule_type": "linear",
+    #             "beta_start": 0.0001,
+    #             "beta_end": 0.02
+    #         }
 
     def _wrap_standalone_transformer(self, transformer: nn.Module, **kwargs):
         """适配FLUX/PixArt-Alpha的独立Transformer块（直接有transformer_blocks）"""
