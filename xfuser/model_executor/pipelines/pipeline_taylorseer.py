@@ -86,7 +86,7 @@ class xFuserTaylorseerPipelineWrapper:
             
             logger.info("Taylorseer enabled in Stable Diffusion3 successfully")
             
-            
+        #先试一下这个Flux的情况下是否能用 
         elif self.input_config.model_type == "flux":
             from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxTransformer2DWrapper
             self.pipeline.transformer = xFuserFluxTransformer2DWrapper(self.pipeline.transformer)
