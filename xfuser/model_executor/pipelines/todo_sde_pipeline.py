@@ -13,7 +13,7 @@ class xFuserSDEPipelineWrapper:
     支持PixArt-Alpha等模型架构的SDE缓存加速
     """
     def __init__(self, pipeline, cache_interval=4, feature_change_thresh=0.12, 
-                 attention_similar_thresh=0.85, sde_epsilon=0.01, rel_l1_thresh=0.05):
+                 attention_similar_thresh=0.85, sde_epsilon=0.01, rel_l1_thresh=0.05, input_config=None):
         self.pipeline = pipeline
         self.cache_interval = cache_interval
         self.feature_change_thresh = feature_change_thresh
@@ -21,13 +21,48 @@ class xFuserSDEPipelineWrapper:
         self.sde_epsilon = sde_epsilon
         self.rel_l1_thresh = rel_l1_thresh
         self.sde_cached_blocks = {}
-        self.num_steps = pipeline.config.num_train_timesteps
+        self.input_config = input_config
+        self.sde_cache_enabled = False  # 新增：SDE缓存启用标志
         
         # 初始化包装器
         self._wrap_transformers()
-        
+    
+    def enable_sde_cache(self):
+        """启用SDE缓存加速（在需要时调用）"""
+        if not self.sde_cache_enabled:
+            self._wrap_transformers()
+            self.sde_cache_enabled = True
+            print("SDE Cache 已启用")
+        else:
+            print("SDE Cache 已经处于启用状态")
+    
+    def disable_sde_cache(self):
+        """禁用SDE缓存加速"""
+        if self.sde_cache_enabled:
+            # 恢复原始模型（如果需要）
+            self.sde_cache_enabled = False
+            print("SDE Cache 已禁用")
+        else:
+            print("SDE Cache 已经处于禁用状态")
+    
     def _wrap_transformers(self):
         """遍历并包装模型中的transformer组件"""
+        # 从input_config中获取参数（如果有）
+        if self.input_config:
+            self.cache_interval = self.input_config.get("cache_interval", self.cache_interval)
+            self.feature_change_thresh = self.input_config.get("feature_change_thresh", self.feature_change_thresh)
+            self.attention_similar_thresh = self.input_config.get("attention_similar_thresh", self.attention_similar_thresh)
+            self.sde_epsilon = self.input_config.get("sde_epsilon", self.sde_epsilon)
+            self.rel_l1_thresh = self.input_config.get("rel_l1_thresh", self.rel_l1_thresh)
+            
+            # 特别处理model_type参数
+            model_type = self.input_config.get("model_type", "")
+            if "pixart" in model_type.lower():
+                print("检测到PixArt模型，启用PixArt优化")
+                # 可以在这里设置PixArt特定的参数
+                self.feature_change_thresh = 0.15  # 微调PixArt的阈值
+                self.attention_similar_thresh = 0.88
+        
         # 处理U-Net中的transformer
         if hasattr(self.pipeline.unet, "down_blocks"):
             for i, block in enumerate(self.pipeline.unet.down_blocks):
@@ -118,6 +153,9 @@ class xFuserSDEPipelineWrapper:
     
     def __call__(self, *args, **kwargs):
         """调用原始pipeline，但使用优化后的transformer"""
+        if not self.sde_cache_enabled:
+            print("警告：SDE Cache未启用，直接使用原始模型推理")
+        
         return self.pipeline(*args, **kwargs)
     
     def get_cache_hit_rate(self):
@@ -166,13 +204,6 @@ class SDECachedTransformerBlocks(nn.Module):
         self.rel_l1_thresh = rel_l1_thresh
         self.num_steps = num_steps
         self.cache_interval = cache_interval
-        
-        # 缓存上下文
-        self.cache_context = CacheContext()
-        self.cnt = torch.tensor(0, dtype=torch.int32).cuda()  # 当前时间步计数
-        self.last_updated_timestep = torch.tensor(-1, dtype=torch.int32).cuda()  # 上次更新缓存的时间步
-        self.use_cache = False  # 是否使用缓存
-        
         # 初始化缓存
         self.reset_cache()
     

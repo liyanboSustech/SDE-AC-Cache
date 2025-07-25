@@ -47,7 +47,7 @@ def parse_args():
         help="Number of inference steps",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    # parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument(
         "--height", type=int, default=768, help="Image height"
     )
@@ -60,18 +60,18 @@ def parse_args():
         default="taylorseer_benchmark_results",
         help="Output directory for results",
     )
-    parser.add_argument(
-        "--cache_ratio_threshold",
-        type=float,
-        default=0.05,
-        help="FastCache ratio threshold",
-    )
-    parser.add_argument(
-        "--motion_threshold",
-        type=float,
-        default=0.1,
-        help="Only For FastCache motion threshold",
-    )
+    # parser.add_argument(
+    #     "--cache_ratio_threshold",
+    #     type=float,
+    #     default=0.05,
+    #     help="FastCache ratio threshold",
+    # )
+    # parser.add_argument(
+    #     "--motion_threshold",
+    #     type=float,
+    #     default=0.1,
+    #     help="Only For FastCache motion threshold",
+    # )
     parser.add_argument(
         "--repeat",
         type=int,
@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument(
         "--sde_schedule_type",
         type=str,
-        choices=["linear", "cosine", "squaredcos_cap_v2"],
+        choices=["linear", "cosine"],
         default="cosine",
         help="SDE schedule type for Flux model",
     )
@@ -91,6 +91,31 @@ def parse_args():
         default=1e-5,
         help="SDE epsilon for Flux model",
     )
+    parser.add_argument(
+        "--cache_interval",
+        type=int,
+        default=1,
+        help="Cache interval for SDE Cache",
+    )
+    parser.add_argument(
+        "--feature_change_thresh",
+        type=float,
+        default=0.12,
+        help="Feature change threshold for SDE Cache",
+    )
+    parser.add_argument(
+        "--attention_similar_thresh",
+        type=float,
+        default=0.85,
+        help="Attention similarity threshold for SDE Cache",
+    )
+    parser.add_argument(
+        "--rel_l1_thresh",
+        type=float,
+        default=0.05,
+        help="Relative L1 threshold for SDE Cache",
+    )
+
     args = parser.parse_args()
     return args
 
@@ -291,6 +316,10 @@ def run_with_sde_cache(model, args):
         "model_type": args.model_type,
         "sde_schedule_type": args.sde_schedule_type,
         "sde_epsilon": args.sde_epsilon,
+        "cache_interval": args.cache_interval,  # SDE Cache的间隔
+        "feature_change_thresh": args.feature_change_thresh,  # 特征变化阈值
+        "attention_similar_thresh": args.attention_similar_thresh,  # 注意力相似度
+        "rel_l1_thresh": args.rel_l1_thresh,  # 相对L1阈值
     }
     wrapper = xFuserSDEPipelineWrapper(model,input_config=input_config)  # 传入必要的config
     wrapper.enable_sde_cache()  # 启用SDE Cache
@@ -329,7 +358,7 @@ def save_results(results, times, args):
     
     # Create bar chart
     # colors = ['blue', 'green', 'orange', 'red', 'purple']# 新增紫色用于TaylorSeer``
-    colors = ['blue', 'purple', 'orange']  # 
+    colors = ['blue', 'orange']  # 
     plt.bar(methods, avg_times, color=colors[:len(methods)])
     plt.ylabel('Time (seconds)')
     plt.title(f'Inference Time Comparison ({args.model_type})')
@@ -362,7 +391,7 @@ def main():
         # "FastCache": [],
         # "TeaCache": [],
         # "FirstBlockCache": [],
-        "TaylorSeer": [],  # 新增
+        # "TaylorSeer": [],  # 新增
         "SDECache": [],  # 如果需要SDE Cache，可以取消注释
     }
     
@@ -411,14 +440,14 @@ def main():
         #     torch.cuda.empty_cache()
         
         # 5. 运行TaylorSeer（新增，仅Flux）
-        if args.model_type == "flux":
-            print("\nRunning with TaylorSeer...")
-            result, elapsed = run_with_taylorseer(model, args)
-            if result is not None:
-                results["TaylorSeer"] = result
-                times["TaylorSeer"].append(elapsed)
-                print(f"TaylorSeer completed in {elapsed:.4f}s")
-            torch.cuda.empty_cache()
+        # if args.model_type == "flux":
+        #     print("\nRunning with TaylorSeer...")
+        #     result, elapsed = run_with_taylorseer(model, args)
+        #     if result is not None:
+        #         results["TaylorSeer"] = result
+        #         times["TaylorSeer"].append(elapsed)
+        #         print(f"TaylorSeer completed in {elapsed:.4f}s")
+        #     torch.cuda.empty_cache()
         
         # 6. 运行SDE Cache（新增）
         if args.model_type == "flux":
