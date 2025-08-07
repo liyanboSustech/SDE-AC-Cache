@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 from diffusers.models.transformers.transformer_flux import FluxTransformerBlock
 import torch
 
-from taylorseer_utils import derivative_approximation, taylor_formula, taylor_cache_init
+from ..taylorseer_utils import derivative_approximation, taylor_formula, taylor_cache_init
 
 def taylorseer_flux_double_block_forward(
     self: FluxTransformerBlock,

@@ -4,7 +4,7 @@ from diffusers import PixArtTransformer2DModel
 from diffusers.models.transformers.transformer_2d import Transformer2DModelOutput
 from diffusers.utils import is_torch_version
 from xfuser.core.distributed import is_pipeline_first_stage, is_pipeline_last_stage
-from taylorseer.cache_functions import cache_init, cal_type
+from ..cache_functions import cache_init, cal_type
 
 def taylorseer_xfuser_pixart_alpha_forward(
     self: PixArtTransformer2DModel,

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
-from diffusers.models.transformer_2d import Transformer2DModel
+# from diffusers.models.transformer_2d import Transformer2DModel
 from diffusers.models.attention_processor import AttentionProcessor
 from diffusers.models.attention import BasicTransformerBlock
 from diffusers.models.embeddings import AdaLayerNormSingle

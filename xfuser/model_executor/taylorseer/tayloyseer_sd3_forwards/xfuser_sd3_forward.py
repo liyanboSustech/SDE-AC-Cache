@@ -11,7 +11,7 @@ from diffusers.utils import (
 from xfuser.core.distributed.runtime_state import get_runtime_state
 from xfuser.core.distributed import is_pipeline_first_stage, is_pipeline_last_stage
 
-from taylorseer.cache_functions import cache_init, cal_type
+from ..cache_functions import cache_init, cal_type
 
 def taylorseer_xfuser_stable_diffusion3_forward(
     self: SD3Transformer2DModel,

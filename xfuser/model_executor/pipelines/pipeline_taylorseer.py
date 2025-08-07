@@ -22,9 +22,9 @@ from xfuser.core.distributed.parallel_state import (
     is_pipeline_first_stage,
     is_pipeline_last_stage,
 )
-from taylorseer.taylorseer_flux_forwards import taylorseer_flux_single_block_forward, taylorseer_flux_double_block_forward, taylorseer_flux_forward, taylorseer_xfuser_flux_forward
-from taylorseer.tayloyseer_pixart_alpha_forwards.xfuser_pixart_alpha_forward import taylorseer_xfuser_pixart_alpha_forward
-from taylorseer.tayloyseer_sd3_forwards.xfuser_sd3_forward import taylorseer_xfuser_stable_diffusion3_forward
+from ..taylorseer.taylorseer_flux_forwards import taylorseer_flux_single_block_forward, taylorseer_flux_double_block_forward, taylorseer_flux_forward, taylorseer_xfuser_flux_forward
+from ..taylorseer.tayloyseer_pixart_alpha_forwards.xfuser_pixart_alpha_forward import taylorseer_xfuser_pixart_alpha_forward
+from ..taylorseer.tayloyseer_sd3_forwards.xfuser_sd3_forward import taylorseer_xfuser_stable_diffusion3_forward
 from xfuser.logger import init_logger
 
 logger = init_logger(__name__)

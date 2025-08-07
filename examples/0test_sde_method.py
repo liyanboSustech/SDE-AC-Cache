@@ -24,14 +24,14 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="stabilityai/stable-diffusion-3-medium-diffusers",
+        default="/nfs_ssd/model/OriginModel/FLUX.1-dev",
         help="Model path or name",
     )
     parser.add_argument(
         "--model_type",
         type=str,
         choices=["sd3", "flux", "pixart"],
-        default="sd3",
+        default="flux",
         help="Model type (sd3 or flux or pixart)",
     )
     parser.add_argument(
@@ -60,24 +60,24 @@ def parse_args():
         default="taylorseer_benchmark_results",
         help="Output directory for results",
     )
-    # parser.add_argument(
-    #     "--cache_ratio_threshold",
-    #     type=float,
-    #     default=0.05,
-    #     help="FastCache ratio threshold",
-    # )
+    parser.add_argument(
+        "--cache_ratio_threshold",
+        type=float,
+        default=0.05,
+        help="FastCache ratio threshold",
+    )
     # parser.add_argument(
     #     "--motion_threshold",
     #     type=float,
     #     default=0.1,
     #     help="Only For FastCache motion threshold",
     # )
-    parser.add_argument(
-        "--repeat",
-        type=int,
-        default=3,
-        help="Number of times to repeat each benchmark",
-    )
+    # parser.add_argument(
+    #     "--repeat",
+    #     type=int,
+    #     default=3,
+    #     help="Number of times to repeat each benchmark",
+    # )
     parser.add_argument(
         "--sde_schedule_type",
         type=str,

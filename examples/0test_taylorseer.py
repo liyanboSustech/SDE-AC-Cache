@@ -255,17 +255,23 @@ def run_with_fbcache(model, args):
 # 新增：TaylorSeer运行函数
 def run_with_taylorseer(model, args):
     """Run the model with TaylorSeer acceleration"""
-    # 创建TaylorSeer包装器
-    from xfuser.model_executor.pipelines.pipeline_taylorseer import xFuserTaylorseerPipelineWrapper  # 替换为实际模块名
-    # 这里如何把max_order和fisrt_enhance传递给TaylorSeer呢
+    from xfuser.model_executor.pipelines.pipeline_taylorseer import xFuserTaylorseerPipelineWrapper  
+    
+    # 构建输入配置，传递TaylorSeer参数
     input_config = {
         "max_order": args.max_order,
         "fisrt_enhance": args.fisrt_enhance,
         "num_inference_steps": args.num_inference_steps,
         "model_type": args.model_type,
     }
-    wrapper = xFuserTaylorseerPipelineWrapper(model,input_config)  # 传入必要的config
-    wrapper.enable_taylorseer()  # 启用TaylorSeer
+    wrapper = xFuserTaylorseerPipelineWrapper(model, input_config)
+    
+    try:
+        wrapper.enable_taylorseer()  # 启用TaylorSeer
+    except AssertionError as e:
+        print("[Warning] World group not initialized, defaulting to single GPU mode.")
+        # 给 wrapper 一个默认 local_rank，避免报错
+        wrapper.local_rank = 0
     
     # 运行推理
     start_time = time.time()
@@ -274,7 +280,7 @@ def run_with_taylorseer(model, args):
         width=args.width,
         prompt=args.prompt,
         num_inference_steps=args.num_inference_steps,
-        output_type="pil",  # 确保输出类型正确
+        output_type="pil",  
         generator=torch.Generator(device=f"cuda").manual_seed(args.seed),
     )
     end_time = time.time()
@@ -300,8 +306,8 @@ def save_results(results, times, args):
     avg_times = [np.mean(times[k]) for k in methods]
     
     # Create bar chart
-    # colors = ['blue', 'green', 'orange', 'red', 'purple']# 新增紫色用于TaylorSeer``
-    colors = ['blue', 'purple'] 
+    colors = ['blue', 'green', 'orange', 'purple']# 新增紫色用于TaylorSeer``
+    # colors = ['blue', 'purple'] , 'red'
     plt.bar(methods, avg_times, color=colors[:len(methods)])
     plt.ylabel('Time (seconds)')
     plt.title(f'Inference Time Comparison ({args.model_type})')
@@ -326,23 +332,48 @@ def save_results(results, times, args):
 
 def main():
     args = parse_args()
-    
-    # Dictionary to store results and timings（新增TaylorSeer）
+    import torch.distributed as dist
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+
+    # 初始化torch分布式进程组
+    if not dist.is_initialized():
+        dist.init_process_group(
+            backend="nccl",
+            init_method="env://",
+            world_size=int(os.environ.get("WORLD_SIZE", 1)),
+            rank=int(os.environ.get("RANK", 0))
+        )
+        print("[Info] torch.distributed process group initialized.")
+
+    # 新增：初始化xfuser的world group
+    try:
+        from xfuser.core.distributed.parallel_state import init_world_group
+        init_world_group()
+        print("[Info] xfuser world group initialized.")
+    except Exception as e:
+        print(f"[Warning] Failed to initialize xfuser world group: {e}")
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    print(f"分布式环境初始化完成：rank={rank}, world_size={world_size}, local_rank={local_rank}")
+
+    # 结果收集
     results = {}
     times = {
         "Baseline": [],
-        # "FastCache": [],
-        # "TeaCache": [],
-        # "FirstBlockCache": [],
-        "TaylorSeer": []  # 新增
+        "TaylorSeer": []
     }
-    
+    # === 模型只加载一次 ===
+    print("Loading model once before benchmarks...")
+    model = load_model(args)
     # Run benchmarks multiple times for more reliable results
+    # 
     for i in range(args.repeat):
         print(f"\nBenchmark run {i+1}/{args.repeat}")
         
         # 1. 运行Baseline
-        model = load_model(args)
         print("\nRunning baseline...")
         result, elapsed = run_baseline(model, args)
         results["Baseline"] = result
@@ -350,36 +381,33 @@ def main():
         print(f"Baseline completed in {elapsed:.4f}s")
         torch.cuda.empty_cache()
         
-        # # 2. 运行FastCache
-        # model = load_model(args)
-        # print("\nRunning with FastCache...")
-        # result, elapsed = run_with_fastcache(model, args)
-        # results["FastCache"] = result
-        # times["FastCache"].append(elapsed)
-        # print(f"FastCache completed in {elapsed:.4f}s")
-        # torch.cuda.empty_cache()
+        # 2. 运行FastCache
+        print("\nRunning with FastCache...")
+        result, elapsed = run_with_fastcache(model, args)
+        results["FastCache"] = result
+        times["FastCache"].append(elapsed)
+        print(f"FastCache completed in {elapsed:.4f}s")
+        torch.cuda.empty_cache()
         
         # 3. 运行TeaCache（仅Flux）
-        # if args.model_type == "flux":
-        #     model = load_model(args)
-        #     print("\nRunning with TeaCache...")
-        #     result, elapsed = run_with_teacache(model, args)
-        #     if result is not None:
-        #         results["TeaCache"] = result
-        #         times["TeaCache"].append(elapsed)
-        #         print(f"TeaCache completed in {elapsed:.4f}s")
-        #     torch.cuda.empty_cache()
+        if args.model_type == "flux":
+            print("\nRunning with TeaCache...")
+            result, elapsed = run_with_teacache(model, args)
+            if result is not None:
+                results["TeaCache"] = result
+                times["TeaCache"].append(elapsed)
+                print(f"TeaCache completed in {elapsed:.4f}s")
+            torch.cuda.empty_cache()
         
-        # # 4. 运行FirstBlockCache（仅Flux）
-        # if args.model_type == "flux":
-        #     model = load_model(args)
-        #     print("\nRunning with First-Block-Cache...")
-        #     result, elapsed = run_with_fbcache(model, args)
-        #     if result is not None:
-        #         results["FirstBlockCache"] = result
-        #         times["FirstBlockCache"].append(elapsed)
-        #         print(f"First-Block-Cache completed in {elapsed:.4f}s")
-        #     torch.cuda.empty_cache()
+        # 4. 运行FirstBlockCache（仅Flux）
+        if args.model_type == "flux":
+            print("\nRunning with First-Block-Cache...")
+            result, elapsed = run_with_fbcache(model, args)
+            if result is not None:
+                results["FirstBlockCache"] = result
+                times["FirstBlockCache"].append(elapsed)
+                print(f"First-Block-Cache completed in {elapsed:.4f}s")
+            torch.cuda.empty_cache()
         
         # 5. 运行TaylorSeer（新增，仅Flux）
         if args.model_type == "flux":
