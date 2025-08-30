@@ -7,7 +7,7 @@ set -x
 export PYTHONPATH=$(dirname $PWD):$PYTHONPATH
 
 # Model configuration
-MODEL_ID="black-forest-labs/FLUX.1-dev"  # Replace with your model path
+MODEL_ID="/home/lyb/FLUX.1-dev"  # Replace with your model path
 INFERENCE_STEP=50
 HEIGHT=1024
 WIDTH=1024
@@ -40,20 +40,20 @@ ULYSSES_DEGREE=1
 # Ring degree (for ring attention)
 RING_DEGREE=1
 
-# CFG parallel degree
-CFG_DEGREE=1
+# # CFG parallel degree
+# CFG_DEGREE=1
 
 # Number of pipeline patches
 NUM_PIPELINE_PATCH=1
 
 # Build parallel arguments
-PARALLEL_ARGS="--data_parallel_degree $DP_DEGREE --tensor_parallel_degree $TP_DEGREE --pipefusion_parallel_degree $PP_DEGREE --ulysses_degree $ULYSSES_DEGREE --ring_degree $RING_DEGREE --cfg_degree $CFG_DEGREE --num_pipeline_patch $NUM_PIPELINE_PATCH"
+PARALLEL_ARGS="--data_parallel_degree $DP_DEGREE --tensor_parallel_degree $TP_DEGREE --pipefusion_parallel_degree $PP_DEGREE --ulysses_degree $ULYSSES_DEGREE --ring_degree $RING_DEGREE  --num_pipeline_patch $NUM_PIPELINE_PATCH"
 
 # Task specific arguments
-TASK_ARGS="--height $HEIGHT --width $WIDTH --batch_size $BATCH_SIZE --num_inference_steps $INFERENCE_STEP"
+TASK_ARGS="--height $HEIGHT --width $WIDTH  --num_inference_steps $INFERENCE_STEP"
 
 # Output configuration
-OUTPUT_ARGS="--output_type pil"
+# OUTPUT_ARGS="--output_type pil"
 
 # Run with torchrun
 torchrun --nproc_per_node=$N_GPUS \

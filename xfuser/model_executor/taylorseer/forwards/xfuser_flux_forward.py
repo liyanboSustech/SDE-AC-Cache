@@ -26,7 +26,7 @@ from xfuser.core.distributed.parallel_state import (
     is_pipeline_last_stage,
 )
 
-from cache_functions import cache_init, cal_type
+from ..cache_functions import cache_init, cal_type
 
 logger = logging.get_logger(__name__)
 
